@@ -1,0 +1,96 @@
+name: CI
+on:
+  pull_request:
+  push:
+  schedule:
+    - cron: '0 0 * * *' # Run every day at 00:00 UTC.
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUST_BACKTRACE: full  # Shows more info when a test fails.
+
+jobs:
+  basic_checks:
+    name: Basic checks (cargo ${{ matrix.cmd }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cmd:
+          - fmt
+          - doc
+        include:
+          - cmd: fmt
+            args: --all -- --check
+          - cmd: doc
+            args: --all-features
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt
+
+      - name: cargo ${{ matrix.cmd }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: ${{ matrix.cmd }}
+          args: ${{ matrix.args }}
+
+  test:
+    name: Test ${{ matrix.rust }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macOS-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install Rust (${{ matrix.rust }})
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      # LLVM support for Windows taken from here:
+      # https://github.com/bytecodealliance/wasmtime/blob/428449133943213f2edc58ec161efcbb23d0eebd/.github/workflows/main.yml#L169
+      - name: Install libclang
+        # NOTE: libclang is pre-installed on the macOS and linux images.
+        if: matrix.os == 'windows-latest'
+        run: |
+          curl https://releases.llvm.org/9.0.0/LLVM-9.0.0-win64.exe -o llvm-installer.exe
+          7z x llvm-installer.exe -oC:/llvm-binary
+          echo LIBCLANG_PATH=C:/llvm-binary/bin/libclang.dll >> $GITHUB_ENV
+          echo C:/llvm-binary/bin >> $GITHUB_PATH
+
+      - name: Query Clang Version
+        if: matrix.os == 'windows-latest'
+        run: |
+          where clang.exe
+          clang.exe --version
+
+      - name: Test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          # Run the tests for all features and always print their output, for
+          # debugging reasons.
+          args: "--all-features -- --nocapture"
